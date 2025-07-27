@@ -2,67 +2,87 @@ from scapy.all import sniff, IP, TCP, UDP, DNS
 import csv
 from datetime import datetime
 
-# List to store captured packet data
-packet_log = []
+# Store captured packets
+log_data = []
 
-def process_packet(packet):
-    data = {}
-    if IP in packet:
-        data['Time'] = datetime.now().strftime('%H:%M:%S')
-        data['Source IP'] = packet[IP].src
-        data['Destination IP'] = packet[IP].dst
-        data['Protocol'] = packet[IP].proto
 
-        if TCP in packet:
-            data['Type'] = 'TCP'
-            data['Src Port'] = packet[TCP].sport
-            data['Dst Port'] = packet[TCP].dport
+def handle_packet(pkt):
+    # Store info about each packet
+    packet_info = {
+        'Time': datetime.now().strftime('%H:%M:%S'),
+        'Source IP': pkt[IP].src if IP in pkt else '',
+        'Destination IP': pkt[IP].dst if IP in pkt else '',
+        'Protocol': pkt[IP].proto if IP in pkt else '',
+        'Type': 'Other',
+        'Src Port': '-',
+        'Dst Port': '-',
+        'Info': ''
+    }
 
-        elif UDP in packet:
-            data['Type'] = 'UDP'
-            data['Src Port'] = packet[UDP].sport
-            data['Dst Port'] = packet[UDP].dport
+    if TCP in pkt:
+        packet_info['Type'] = 'TCP'
+        packet_info['Src Port'] = pkt[TCP].sport
+        packet_info['Dst Port'] = pkt[TCP].dport
+    elif UDP in pkt:
+        packet_info['Type'] = 'UDP'
+        packet_info['Src Port'] = pkt[UDP].sport
+        packet_info['Dst Port'] = pkt[UDP].dport
+    elif DNS in pkt:
+        packet_info['Type'] = 'DNS'
+        try:
+            packet_info['Info'] = f"Query: {pkt[DNS].qd.qname.decode()}"
+        except:
+            packet_info['Info'] = 'Unknown DNS Query'
 
-        elif DNS in packet:
-            data['Type'] = 'DNS'
-            try:
-                data['Query'] = str(packet[DNS].qd.qname.decode())
-            except:
-                data['Query'] = 'Unknown'
+    log_data.append(packet_info)
+    show_packet(packet_info)
 
-        else:
-            data['Type'] = 'Other'
-            data['Src Port'] = '-'
-            data['Dst Port'] = '-'
 
-        packet_log.append(data)
-        print_packet(data)
+def show_packet(pkt):
+    # Print each captured packet in a readable format
+    print(f"[{pkt['Time']}] {pkt['Source IP']} -> {pkt['Destination IP']} | "
+        f"{pkt['Type']} | {pkt.get('Src Port', '-')}/{pkt.get('Dst Port', '-')} | {pkt.get('Info', '')}")
 
-def print_packet(pkt):
-    print(f"[{pkt['Time']}] {pkt['Source IP']} -> {pkt['Destination IP']} | {pkt['Type']} | {pkt.get('Src Port', '-')}/{pkt.get('Dst Port', '-')}")
 
-def save_to_csv(filename="packet_log.csv"):
-    keys = packet_log[0].keys() if packet_log else []
+def save_log(filename="packet_log.csv"):
+    if not log_data:
+        print("\n[-] No packets to save.")
+        return
+
+    # Define CSV columns
+    headers = ['Time', 'Source IP', 'Destination IP',
+               'Protocol', 'Type', 'Src Port', 'Dst Port', 'Info']
     with open(filename, 'w', newline='') as f:
-        writer = csv.DictWriter(f, fieldnames=keys)
+        writer = csv.DictWriter(f, fieldnames=headers)
         writer.writeheader()
-        for pkt in packet_log:
+        for pkt in log_data:
             writer.writerow(pkt)
-    print(f"\n[+] Saved {len(packet_log)} packets to {filename}")
 
-def start_sniffing(packet_count=20, filter_str="ip"):
+    print(f"\n[+] Saved {len(log_data)} packets to {filename}")
+
+
+def start_capture(count_input, filter_rule="ip"):
     print("[*] Starting packet capture...\n")
-    sniff(filter=filter_str, prn=process_packet, count=packet_count)
-    save_to_csv()
+    try:
+        if count_input:
+            pkt_count = int(count_input)
+            sniff(filter=filter_rule, prn=handle_packet, count=pkt_count)
+        else:
+            sniff(filter=filter_rule, prn=handle_packet)
+    except KeyboardInterrupt:
+        print("\n[-] Capture stopped by user.")
+    finally:
+        save_log()
+
 
 if __name__ == "__main__":
     print("Simple LAN Packet Sniffer (Python + Scapy)")
     print("------------------------------------------")
     try:
-        packet_count = int(input("Enter number of packets to capture: "))
-        filter_str = input("Enter filter (e.g., 'tcp', 'udp', 'ip', 'port 53'): ").strip() or "ip"
-        start_sniffing(packet_count, filter_str)
-    except KeyboardInterrupt:
-        print("\n[-] Capture interrupted.")
-        if packet_log:
-            save_to_csv()
+        num_packets = input(
+            "Enter number of packets to capture (leave empty for infinite): ").strip()
+        filter_rule = input(
+            "Enter filter (e.g., 'tcp', 'udp', 'ip', 'port 53') [default: ip]: ").strip() or "ip"
+        start_capture(num_packets, filter_rule)
+    except Exception as e:
+        print(f"Something went wrong: {e}")
